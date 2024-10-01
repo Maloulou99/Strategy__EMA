@@ -1,0 +1,84 @@
+#ifndef __SYMBOLEASSSTACK__H
+#define __SYMBOLEASSSTACK__H
+
+class SymboleAssStack
+{
+private:
+    string lastSymbol;
+    ENUM_TIMEFRAMES lastTimeframe;
+    datetime lastTradeTime; 
+
+public:
+    SymboleAssStack() : lastSymbol(""), lastTimeframe(PERIOD_CURRENT), lastTradeTime(0) 
+    {
+    }
+
+    void Initialize()
+    {
+        lastSymbol = Symbol();
+        lastTimeframe = Period();
+        lastTradeTime = 0; // Reset ved initialization
+
+        Print("Initialization complete: Symbol = ", lastSymbol, ", Timeframe = ", lastTimeframe);
+    }
+
+    bool CheckSymbolOrTimeframeChange()
+    {
+        string currentSymbol = Symbol();
+        ENUM_TIMEFRAMES currentTimeframe = Period();
+
+        if (lastSymbol != currentSymbol || lastTimeframe != currentTimeframe)
+        {
+            lastSymbol = currentSymbol;
+            lastTimeframe = currentTimeframe;
+
+            Print("Symbol or Timeframe changed to ", lastSymbol, " and timeframe ", EnumToString(lastTimeframe));
+
+            return true;
+        }
+
+        return false;
+    }
+
+    void HandleNewSymbolOrTimeframe()
+    {
+        if (CheckSymbolOrTimeframeChange())
+        {
+            Print("Handling new symbol or timeframe: ", lastSymbol, ", Timeframe: ", EnumToString(lastTimeframe));
+        }
+    }
+
+    void UpdateLastTradeTime()
+    {
+        lastTradeTime = TimeCurrent(); // Opdater tidspunkt for seneste handel
+    }
+
+    bool CanOpenNewTrade()
+    {
+        return (TimeCurrent() - lastTradeTime >= GetBreakTime()); // Check om cooldown er udløbet
+    }
+
+    int GetBreakTime()
+    {
+        ENUM_TIMEFRAMES timeframe = Period();
+        int breakTime;
+
+        switch (timeframe)
+        {
+            case PERIOD_M1:   breakTime = 30;   break; // 30 sekunder
+            case PERIOD_M5:   breakTime = 150;  break; // 2.5 minutter
+            case PERIOD_M15:  breakTime = 300;  break; // 5 minutter
+            case PERIOD_M30:  breakTime = 600;  break; // 10 minutter
+            case PERIOD_H1:   breakTime = 1200; break; // 20 minutter
+            case PERIOD_H2:   breakTime = 2400; break; // 40 minutter
+            case PERIOD_H4:   breakTime = 4800; break; // 80 minutter
+            case PERIOD_D1:   breakTime = 86400; break; // 1 dag
+            case PERIOD_W1:   breakTime = 604800; break; // 1 uge
+            default:          breakTime = 30;   break; // Standard 30 sekunder
+        }
+
+        return breakTime;
+    }
+};
+
+#endif
