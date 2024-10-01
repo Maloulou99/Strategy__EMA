@@ -1,0 +1,387 @@
+//+------------------------------------------------------------------+
+//|                                                   AssStack.mq5   | 
+//|                Displays SMA82 Indicator                          | 
+//|              and generates buy/sell signals on SMA levels        | 
+//|          Handles changes in symbol and timeframe automatically   | 
+//+------------------------------------------------------------------+
+
+#include <SymboleAssStack.mqh>
+
+#property indicator_chart_window
+#property indicator_buffers 2
+#property indicator_plots 2
+
+#property indicator_label1 "SMA82"
+#property indicator_type1 DRAW_LINE
+#property indicator_color1 clrBlue     // Color for the SMA line
+#property indicator_width1 2
+
+#property indicator_label2 "Safety Net"
+#property indicator_type2 DRAW_LINE
+#property indicator_color2 clrAqua     // Safety net line color
+#property indicator_width2 2
+
+// Indicator buffers
+double SMA82Buffer[];
+double SafetyNetBuffer[];               // Buffer for safety net values
+
+// Indicator handle
+int handleSMA82;
+
+// Variables to track trade information
+double lastBuyPrice = 0.0;              // Track last buy price
+double takeProfitPrice = 0.0;           // Track take profit price
+
+bool buyPositionLogged = false;         // Track if a buy position is logged
+bool canOpenNewBuy = true;              // Flag to open new buy
+double lastSMAValue = 0.0;              // Last value of SMA
+bool isCrossover = false;
+
+//+------------------------------------------------------------------+
+//| Custom indicator initialization function                           |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+    handleSMA82 = iMA(Symbol(), 0, 82, 0, MODE_SMA, PRICE_CLOSE);
+
+    if (handleSMA82 == INVALID_HANDLE)
+    {
+        Print("Failed to initialize SMA handle. Error code: ", GetLastError());
+        return(INIT_FAILED);
+    }
+
+    SetIndexBuffer(0, SMA82Buffer);
+    SetIndexBuffer(1, SafetyNetBuffer);  // Set the safety net buffer
+    Print("SMA Indicator initialized.");
+    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Custom indicator iteration function                                | 
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total, const int prev_calculated,
+                const datetime &time[], const double &open[], const double &high[],
+                const double &low[], const double &close[], const long &tick_volume[],
+                const long &volume[], const int &spread[])
+{
+    if (rates_total < 82)
+    {
+        Print("Not enough data. Total rates: ", rates_total);
+        return 0;
+    }
+
+    // Copy SMA buffer
+    if (CopyBuffer(handleSMA82, 0, 0, rates_total, SMA82Buffer) <= 0)
+    {
+        Print("Failed to copy SMA buffer. Error code: ", GetLastError());
+        return 0;
+    }
+
+    // Calculate safety net values
+    for (int i = 0; i < rates_total; i++)
+    {
+        SafetyNetBuffer[i] = SMA82Buffer[i] * 0.99;  // Adjust safety net value as needed
+        Print("SMA82 Value: ", SMA82Buffer[i], ", Safety Net Value: ", SafetyNetBuffer[i]);
+    }
+
+    return rates_total;
+}
+// Define the structure for a Candlestick
+struct Candlestick
+{
+    double open;
+    double high;
+    double low;
+    double close;
+    datetime time;
+};
+
+
+Candlestick candlesAfterCandleZeroArray[5]; 
+int candleCount = 0; 
+
+
+// Function to detect SMA crossover
+void CheckCrossover(double smaValueCurrent, double smaValuePrevious)
+{
+    if (smaValuePrevious < lastSMAValue && smaValueCurrent > lastSMAValue) 
+    {
+        isCrossover = true; 
+        Print("Bullish crossover detected.");
+    }
+    else if (smaValuePrevious > lastSMAValue && smaValueCurrent < lastSMAValue) 
+    {
+        isCrossover = true; 
+        Print("Bearish crossover detected.");
+    }
+    else
+    {
+        isCrossover = false; 
+    }
+}
+
+// Function to check if there's enough money for a trade
+bool CheckMoney(ENUM_ORDER_TYPE orderType, double volume, double price)
+{
+    double margin = 0.0;
+    if (!OrderCalcMargin(orderType, Symbol(), volume, price, margin))
+    {
+        Print("Error calculating margin: ", GetLastError());
+        return false;
+    }
+
+    return AccountInfoDouble(ACCOUNT_FREEMARGIN) >= margin;
+}
+
+void OnTick()
+{
+    // Fetch current and previous SMA values
+    if (CopyBuffer(handleSMA82, 0, 0, 2, SMA82Buffer) <= 0)
+    {
+        Print("Failed to copy SMA buffer. Error code: ", GetLastError());
+        return;
+    }
+
+    double smaValueCurrent = SMA82Buffer[0];
+    double smaValuePrevious = SMA82Buffer[1];
+
+    // Check for crossover
+    CheckCrossover(smaValueCurrent, smaValuePrevious);
+
+    // Get current prices
+    double askPrice = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+    double currentClosePrice = iClose(Symbol(), 0, 0);
+    double currentOpenPrice = iOpen(Symbol(), 0, 0);
+    double currentLowPrice = iLow(Symbol(), 0, 0);
+    double currentHighPrice = iHigh(Symbol(), 0, 0);
+    datetime currentTime = iTime(Symbol(), 0, 0); // Get current candle time
+
+    // Check if there's an existing long position
+    bool hasLongPosition = false;
+    ulong positionTicket = 0;
+
+    for (int i = 0; i < PositionsTotal(); i++)
+    {
+        if (PositionGetSymbol(i) == Symbol() && PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+        {
+            hasLongPosition = true;
+            positionTicket = PositionGetInteger(POSITION_TICKET);
+            double currentBuyPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+
+            // Update take profit and other variables
+            if (!buyPositionLogged || currentBuyPrice != lastBuyPrice)
+            {
+                lastBuyPrice = currentBuyPrice;
+                takeProfitPrice = lastBuyPrice * 1.005; 
+                Print("Active BUY position found. Last Buy Price: ", lastBuyPrice, ", Take Profit set at: ", takeProfitPrice);
+                buyPositionLogged = true;
+            }
+            break;
+        }
+    }
+
+    // Reset if no position is found
+    if (!hasLongPosition)
+    {
+        buyPositionLogged = false;
+        canOpenNewBuy = true; // Allow opening new buys
+    }
+
+    // Bullish and bearish conditions
+    bool isBullishCandle = (currentClosePrice > currentOpenPrice);
+    bool isBearishCandle = (currentClosePrice < currentOpenPrice);
+    bool isBodyTouchesSMA = (currentLowPrice <= smaValueCurrent) && (currentHighPrice >= smaValueCurrent);
+
+    // Detect and handle the "Candle Zero" condition
+    static bool isCandleZeroFound = false;
+    double upperShadow = currentHighPrice - currentOpenPrice; // Length of upper shadow
+    double lowerShadow = currentOpenPrice - currentLowPrice; // Length of lower shadow    
+
+   if (!hasLongPosition && isBodyTouchesSMA)
+{
+    Print("Checking candles: hasLongPosition = ", hasLongPosition, ", isBodyTouchesSMA = ", isBodyTouchesSMA);
+
+    // Check for bullish conditions (Bullish candlestick touching SMA)
+    if (isBullishCandle && (currentLowPrice < smaValueCurrent) && (currentHighPrice > smaValueCurrent))
+    {
+        isCandleZeroFound = true; // Found the first candle touching SMA
+        candleCount = 0; // Reset counter
+        Print("Bullish Candle Zero found, starting to record candles after SMA crossover.");
+    }
+    // Check for bearish candlestick and ensure no "buy" position is opened
+    else if (isBearishCandle && 
+             (currentOpenPrice > smaValueCurrent) && 
+             (currentHighPrice > smaValueCurrent) && 
+             (currentLowPrice > smaValueCurrent) && 
+             (currentClosePrice > smaValueCurrent) &&
+             (lowerShadow > 0 && currentLowPrice > smaValueCurrent) && 
+             (upperShadow < (currentOpenPrice - smaValueCurrent))) 
+    {
+        isCandleZeroFound = true; 
+        candleCount = 0; // Reset counter
+        
+        Print("Bearish Candle Zero found, NOT opening a BUY position.");
+    }
+}
+
+    // Adjust the logic in OnTick for checking candle conditions
+    if (isCandleZeroFound)
+    {
+        // Store the candle details
+        if (candleCount < 5) // Only store up to 5 candles
+        {
+            // Store the current candle properties
+            candlesAfterCandleZeroArray[candleCount].open = currentOpenPrice;
+            candlesAfterCandleZeroArray[candleCount].high = currentHighPrice;
+            candlesAfterCandleZeroArray[candleCount].low = currentLowPrice;
+            candlesAfterCandleZeroArray[candleCount].close = currentClosePrice;
+            candlesAfterCandleZeroArray[candleCount].time = currentTime;
+            candleCount++;
+
+            // For the fifth candle, evaluate the conditions
+            if (candleCount == 5)
+            {
+                // Ensure the last candle's body is entirely above the SMA
+                if (candlesAfterCandleZeroArray[4].close > smaValueCurrent && 
+                    candlesAfterCandleZeroArray[4].open > smaValueCurrent) 
+                {
+                    // Check for additional conditions such as no bearish crossover and sufficient margin
+                    if (canOpenNewBuy && !isCrossover) // Here you can also add additional checks if needed
+                    {
+                        if (CheckMoney(ORDER_TYPE_BUY, 1.0, askPrice))
+                        {
+                            Print("Opening a BUY position as the last candle's body is entirely above SMA.");
+                            OpenPosition(ORDER_TYPE_BUY, 1.0, askPrice, "5th Candle Buy");
+
+                            // Reset all conditions after a successful trade
+                            isCandleZeroFound = false;
+                            candleCount = 0;
+                        }
+                        else
+                        {
+                            Print("Not enough margin to open a BUY position.");
+                        }
+                    }
+                    else
+                    {
+                        Print("Cannot open a BUY position due to a bearish crossover or other conditions.");
+                    }
+                }
+                else
+                {
+                    // Reset if the last candle does not close above the SMA
+                    isCandleZeroFound = false;
+                    candleCount = 0;
+                    Print("Last candle's body is not entirely above SMA, resetting count and Candle Zero flag.");
+                }
+            }
+        }
+    }
+
+    // Manage existing positions: Check Stop Loss and Take Profit
+    if (hasLongPosition)
+    {
+        if (askPrice < lastBuyPrice * 0.998) // Stop Loss condition
+        {
+            Print("Stop Loss triggered. Closing position.");
+            ClosePosition(positionTicket);
+        }
+        else if (askPrice >= takeProfitPrice) // Take Profit condition
+        {
+            Print("Take Profit reached. Closing position.");
+            ClosePosition(positionTicket);
+        }
+    }
+
+    // Update the last SMA value
+    lastSMAValue = smaValueCurrent;
+}
+
+
+
+// Function to open a position
+void OpenPosition(ENUM_ORDER_TYPE orderType, double volume, double price, string comment)
+{
+    MqlTradeRequest tradeRequest = {};
+    MqlTradeResult tradeResult = {};
+
+    tradeRequest.action = TRADE_ACTION_DEAL;
+    tradeRequest.symbol = Symbol();
+    tradeRequest.volume = volume;
+    tradeRequest.type = orderType;
+    tradeRequest.price = price;
+    tradeRequest.deviation = 10;
+    tradeRequest.type_filling = ORDER_FILLING_FOK;
+    tradeRequest.comment = comment;
+
+    if (OrderSend(tradeRequest, tradeResult))
+    {
+        Print(comment, ". Order #", IntegerToString(tradeResult.order));
+
+        // Set Stop Loss
+        ulong positionTicket = 0;
+        
+        if (PositionSelect(Symbol()))
+        {
+            positionTicket = PositionGetInteger(POSITION_TICKET);
+            double stopLossPrice = price * 0.998; // 0.2% below opening price for a buy order
+
+            MqlTradeRequest slRequest = {};
+            MqlTradeResult slResult = {};
+
+            slRequest.action = TRADE_ACTION_SLTP;
+            slRequest.symbol = Symbol();
+            slRequest.position = positionTicket;
+            slRequest.sl = NormalizeDouble(stopLossPrice, _Digits); // Set Stop Loss
+            slRequest.deviation = 10;
+            slRequest.type_filling = ORDER_FILLING_FOK;
+            slRequest.type_time = ORDER_TIME_GTC;
+            slRequest.comment = "Set Stop Loss";
+
+            if (OrderSend(slRequest, slResult))
+            {
+                Print("Stop Loss set at: ", stopLossPrice);
+            }
+            else
+            {
+                Print("Failed to set Stop Loss. Error: ", GetLastError());
+            }
+        }
+        else
+        {
+            Print("Failed to select position after opening order.");
+        }
+    }
+    else
+    {
+        Print("Error during ", comment, ": ", GetLastError());
+    }
+}
+
+// Function to close a position
+void ClosePosition(ulong positionTicket)
+{
+    MqlTradeRequest closeRequest = {};
+    MqlTradeResult closeResult = {};
+
+    ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+    closeRequest.action = TRADE_ACTION_DEAL;
+    closeRequest.position = positionTicket;
+    closeRequest.symbol = Symbol();
+    closeRequest.volume = PositionGetDouble(POSITION_VOLUME);
+    closeRequest.type = posType == POSITION_TYPE_BUY ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+    closeRequest.price = SymbolInfoDouble(Symbol(), posType == POSITION_TYPE_BUY ? SYMBOL_BID : SYMBOL_ASK);
+    closeRequest.deviation = 10;
+    closeRequest.type_filling = ORDER_FILLING_FOK;
+    closeRequest.comment = "Close Position";
+
+    if (OrderSend(closeRequest, closeResult))
+    {
+        Print("Position closed. Order number: ", closeResult.order);
+    }
+    else
+    {
+        Print("Failed to close position. Error code: ", GetLastError());
+    }
+}
