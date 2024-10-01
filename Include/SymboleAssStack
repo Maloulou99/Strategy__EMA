@@ -17,7 +17,7 @@ public:
     {
         lastSymbol = Symbol();
         lastTimeframe = Period();
-        lastTradeTime = 0; // Reset ved initialization
+        lastTradeTime = 0; 
 
         Print("Initialization complete: Symbol = ", lastSymbol, ", Timeframe = ", lastTimeframe);
     }
@@ -50,12 +50,12 @@ public:
 
     void UpdateLastTradeTime()
     {
-        lastTradeTime = TimeCurrent(); // Opdater tidspunkt for seneste handel
+        lastTradeTime = TimeCurrent(); 
     }
 
     bool CanOpenNewTrade()
     {
-        return (TimeCurrent() - lastTradeTime >= GetBreakTime()); // Check om cooldown er udløbet
+        return (TimeCurrent() - lastTradeTime >= GetBreakTime()); 
     }
 
     int GetBreakTime()
