@@ -1,3 +1,4 @@
+
 //+------------------------------------------------------------------+
 //|                                                   AssStack.mq5   | 
 //|                Displays SMA82 Indicator                          | 
@@ -31,11 +32,11 @@ int handleSMA82;
 // Variables to track trade information
 double lastBuyPrice = 0.0;              // Track last buy price
 double takeProfitPrice = 0.0;           // Track take profit price
-
-bool buyPositionLogged = false;         // Track if a buy position is logged
-bool canOpenNewBuy = true;              // Flag to open new buy
-double lastSMAValue = 0.0;              // Last value of SMA
-bool isCrossover = false;
+bool buyPositionLogged = false;          // Track if a buy position is logged
+bool canOpenNewBuy = true;               // Flag to open new buy
+double lastSMAValue = 0.0;               // Last value of SMA
+bool takeProfitReached = false;          // Flag to indicate take profit has been reached
+bool criteria  = false;
 
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                           |
@@ -49,6 +50,7 @@ int OnInit()
         Print("Failed to initialize SMA handle. Error code: ", GetLastError());
         return(INIT_FAILED);
     }
+    
 
     SetIndexBuffer(0, SMA82Buffer);
     SetIndexBuffer(1, SafetyNetBuffer);  // Set the safety net buffer
@@ -86,6 +88,7 @@ int OnCalculate(const int rates_total, const int prev_calculated,
 
     return rates_total;
 }
+
 // Define the structure for a Candlestick
 struct Candlestick
 {
@@ -96,65 +99,33 @@ struct Candlestick
     datetime time;
 };
 
-
-Candlestick candlesAfterCandleZeroArray[5]; 
-int candleCount = 0; 
-
-
-// Function to detect SMA crossover
-void CheckCrossover(double smaValueCurrent, double smaValuePrevious)
-{
-    if (smaValuePrevious < lastSMAValue && smaValueCurrent > lastSMAValue) 
-    {
-        isCrossover = true; 
-        Print("Bullish crossover detected.");
-    }
-    else if (smaValuePrevious > lastSMAValue && smaValueCurrent < lastSMAValue) 
-    {
-        isCrossover = true; 
-        Print("Bearish crossover detected.");
-    }
-    else
-    {
-        isCrossover = false; 
-    }
-}
-
-// Function to check if there's enough money for a trade
-bool CheckMoney(ENUM_ORDER_TYPE orderType, double volume, double price)
-{
-    double margin = 0.0;
-    if (!OrderCalcMargin(orderType, Symbol(), volume, price, margin))
-    {
-        Print("Error calculating margin: ", GetLastError());
-        return false;
-    }
-
-    return AccountInfoDouble(ACCOUNT_FREEMARGIN) >= margin;
-}
+// Define an array to store the candlestick objects
+Candlestick candlesAfterCandleZeroArray[5];  // Store last 5 candles after Candle Zero
+int candleCount = 0;  // To keep track of the number of candles added
 
 void OnTick()
 {
-    // Fetch current and previous SMA values
+    // Fetch the current and previous SMA values
+    double smaValueCurrent = 0.0;
+    double smaValuePrevious = 0.0;
+
+    // Fetch the last two SMA values
     if (CopyBuffer(handleSMA82, 0, 0, 2, SMA82Buffer) <= 0)
     {
         Print("Failed to copy SMA buffer. Error code: ", GetLastError());
         return;
     }
 
-    double smaValueCurrent = SMA82Buffer[0];
-    double smaValuePrevious = SMA82Buffer[1];
+    smaValueCurrent = SMA82Buffer[0];  // Current SMA value
+    smaValuePrevious = SMA82Buffer[1];  // Previous SMA value
 
-    // Check for crossover
-    CheckCrossover(smaValueCurrent, smaValuePrevious);
-
-    // Get current prices
     double askPrice = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
     double currentClosePrice = iClose(Symbol(), 0, 0);
     double currentOpenPrice = iOpen(Symbol(), 0, 0);
+    double previousClosePrice = iClose(Symbol(), 0, 1);
     double currentLowPrice = iLow(Symbol(), 0, 0);
     double currentHighPrice = iHigh(Symbol(), 0, 0);
-    datetime currentTime = iTime(Symbol(), 0, 0); // Get current candle time
+    datetime currentTime = iTime(Symbol(), 0, 0);  // Get current candle time
 
     // Check if there's an existing long position
     bool hasLongPosition = false;
@@ -168,13 +139,21 @@ void OnTick()
             positionTicket = PositionGetInteger(POSITION_TICKET);
             double currentBuyPrice = PositionGetDouble(POSITION_PRICE_OPEN);
 
-            // Update take profit and other variables
             if (!buyPositionLogged || currentBuyPrice != lastBuyPrice)
             {
                 lastBuyPrice = currentBuyPrice;
-                takeProfitPrice = lastBuyPrice * 1.005; 
+                takeProfitPrice = lastBuyPrice * 1.005;  // Adjust TP as needed
                 Print("Active BUY position found. Last Buy Price: ", lastBuyPrice, ", Take Profit set at: ", takeProfitPrice);
                 buyPositionLogged = true;
+            }
+
+            // Check if the take profit condition is met
+            if (currentClosePrice >= takeProfitPrice)
+            {
+                ClosePosition(positionTicket); // Close the position
+                takeProfitReached = true; // Set the take profit reached flag
+                Print("Take Profit reached at: ", takeProfitPrice);
+                buyPositionLogged = false; // Reset after take profit
             }
             break;
         }
@@ -184,119 +163,86 @@ void OnTick()
     if (!hasLongPosition)
     {
         buyPositionLogged = false;
-        canOpenNewBuy = true; // Allow opening new buys
-    }
-
-    // Bullish and bearish conditions
-    bool isBullishCandle = (currentClosePrice > currentOpenPrice);
-    bool isBearishCandle = (currentClosePrice < currentOpenPrice);
-    bool isBodyTouchesSMA = (currentLowPrice <= smaValueCurrent) && (currentHighPrice >= smaValueCurrent);
-
-    // Detect and handle the "Candle Zero" condition
-    static bool isCandleZeroFound = false;
-    double upperShadow = currentHighPrice - currentOpenPrice; // Length of upper shadow
-    double lowerShadow = currentOpenPrice - currentLowPrice; // Length of lower shadow    
-
-   if (!hasLongPosition && isBodyTouchesSMA)
-{
-    Print("Checking candles: hasLongPosition = ", hasLongPosition, ", isBodyTouchesSMA = ", isBodyTouchesSMA);
-
-    // Check for bullish conditions (Bullish candlestick touching SMA)
-    if (isBullishCandle && (currentLowPrice < smaValueCurrent) && (currentHighPrice > smaValueCurrent))
-    {
-        isCandleZeroFound = true; // Found the first candle touching SMA
-        candleCount = 0; // Reset counter
-        Print("Bullish Candle Zero found, starting to record candles after SMA crossover.");
-    }
-    // Check for bearish candlestick and ensure no "buy" position is opened
-    else if (isBearishCandle && 
-             (currentOpenPrice > smaValueCurrent) && 
-             (currentHighPrice > smaValueCurrent) && 
-             (currentLowPrice > smaValueCurrent) && 
-             (currentClosePrice > smaValueCurrent) &&
-             (lowerShadow > 0 && currentLowPrice > smaValueCurrent) && 
-             (upperShadow < (currentOpenPrice - smaValueCurrent))) 
-    {
-        isCandleZeroFound = true; 
-        candleCount = 0; // Reset counter
+        canOpenNewBuy = true;  // Reset to allow opening new buys
+        takeProfitReached = false; // Reset take profit flag
         
-        Print("Bearish Candle Zero found, NOT opening a BUY position.");
     }
-}
 
-    // Adjust the logic in OnTick for checking candle conditions
-    if (isCandleZeroFound)
+    // Conditions to check for a bullish signal
+    bool isBullishCandle = (currentClosePrice > currentOpenPrice);
+    bool isBodyTouchesSMA = (currentLowPrice <= smaValueCurrent) && (currentHighPrice > smaValueCurrent);
+    bool isBullishCrossover = (previousClosePrice < smaValuePrevious) && (currentClosePrice > smaValueCurrent);
+
+    // Count candles after a significant bullish crossover
+    static bool isCandleZeroFound = false;
+
+    // Define a new variable to indicate counting state
+    bool isCountingCandles = false;
+    
+    // Check for "Candle Zero" only if no open position exists and criteria met
+    if (!hasLongPosition && !isCountingCandles && isBodyTouchesSMA && isBullishCrossover && isBullishCandle)
     {
-        // Store the candle details
-        if (candleCount < 5) // Only store up to 5 candles
+        isCandleZeroFound = true;  // First bullish candle touching SMA
+        candleCount = 0;  // Reset candle counter
+        isCountingCandles = true; // Start counting candles after "Candle Zero"
+        Print("Candle Zero found, starting to record candles after SMA crossover.");
+    }
+
+    // Logic for recording candles and opening buy position
+if (isCandleZeroFound)
+{
+    // Track if any candle closed above the SMA
+    bool anyCandleAboveSMA = false; // Flag to check if any candle has closed above SMA
+
+    // Check if the current candle's close price is above the SMA
+    if (currentClosePrice > smaValueCurrent)  
+    {
+        // Store candle data in the array
+        if (candleCount < 5)  // Record up to 5 candles
         {
-            // Store the current candle properties
             candlesAfterCandleZeroArray[candleCount].open = currentOpenPrice;
             candlesAfterCandleZeroArray[candleCount].high = currentHighPrice;
             candlesAfterCandleZeroArray[candleCount].low = currentLowPrice;
             candlesAfterCandleZeroArray[candleCount].close = currentClosePrice;
             candlesAfterCandleZeroArray[candleCount].time = currentTime;
+
+            Print("Candle ", candleCount + 1, " recorded: Open=", currentOpenPrice, ", High=", currentHighPrice, ", Low=", currentLowPrice, ", Close=", currentClosePrice);
             candleCount++;
 
-            // For the fifth candle, evaluate the conditions
-            if (candleCount == 5)
-            {
-                // Ensure the last candle's body is entirely above the SMA
-                if (candlesAfterCandleZeroArray[4].close > smaValueCurrent && 
-                    candlesAfterCandleZeroArray[4].open > smaValueCurrent) 
-                {
-                    // Check for additional conditions such as no bearish crossover and sufficient margin
-                    if (canOpenNewBuy && !isCrossover) // Here you can also add additional checks if needed
-                    {
-                        if (CheckMoney(ORDER_TYPE_BUY, 1.0, askPrice))
-                        {
-                            Print("Opening a BUY position as the last candle's body is entirely above SMA.");
-                            OpenPosition(ORDER_TYPE_BUY, 1.0, askPrice, "5th Candle Buy");
-
-                            // Reset all conditions after a successful trade
-                            isCandleZeroFound = false;
-                            candleCount = 0;
-                        }
-                        else
-                        {
-                            Print("Not enough margin to open a BUY position.");
-                        }
-                    }
-                    else
-                    {
-                        Print("Cannot open a BUY position due to a bearish crossover or other conditions.");
-                    }
-                }
-                else
-                {
-                    // Reset if the last candle does not close above the SMA
-                    isCandleZeroFound = false;
-                    candleCount = 0;
-                    Print("Last candle's body is not entirely above SMA, resetting count and Candle Zero flag.");
-                }
-            }
+            // Set the flag if this candle closed above the SMA
+            anyCandleAboveSMA = true; 
         }
     }
-
-    // Manage existing positions: Check Stop Loss and Take Profit
-    if (hasLongPosition)
+    else
     {
-        if (askPrice < lastBuyPrice * 0.998) // Stop Loss condition
+        // If the close price is not above the SMA, reset
+        Print("Candle conditions failed (close below SMA), resetting count and Candle Zero flag.");
+        isCandleZeroFound = false;  // Reset Candle Zero flag
+        candleCount = 0;  // Reset counter
+        return; // Exit early if the condition fails
+    }
+    
+    // Check and open a buy on the 5th candle if conditions are met
+    if (candleCount >= 5)
+    {
+        // Set criteria for the last candle in the array
+        criteria = (candlesAfterCandleZeroArray[4].close > smaValueCurrent); // Check if the last recorded candle closed above the SMA
+
+        // Open position only if at least one candle closed above the SMA
+        if (anyCandleAboveSMA && canOpenNewBuy && criteria) // Include criteria in the condition
         {
-            Print("Stop Loss triggered. Closing position.");
-            ClosePosition(positionTicket);
+            OpenPosition(ORDER_TYPE_BUY, 0.1, askPrice, "Open Buy Position " + IntegerToString(candleCount) + " candles.");
+            canOpenNewBuy = false; // Prevent opening new buys until reset
+            Print("Buy position opened after 5 bullish candles.");
         }
-        else if (askPrice >= takeProfitPrice) // Take Profit condition
+        else
         {
-            Print("Take Profit reached. Closing position.");
-            ClosePosition(positionTicket);
+            Print("Conditions for opening buy position not met.");
+            
         }
     }
-
-    // Update the last SMA value
-    lastSMAValue = smaValueCurrent;
 }
-
+}
 
 
 // Function to open a position
@@ -318,9 +264,8 @@ void OpenPosition(ENUM_ORDER_TYPE orderType, double volume, double price, string
     {
         Print(comment, ". Order #", IntegerToString(tradeResult.order));
 
-        // Set Stop Loss
+        // Set Stop Loss (optional)
         ulong positionTicket = 0;
-        
         if (PositionSelect(Symbol()))
         {
             positionTicket = PositionGetInteger(POSITION_TICKET);
@@ -385,3 +330,4 @@ void ClosePosition(ulong positionTicket)
         Print("Failed to close position. Error code: ", GetLastError());
     }
 }
+
