@@ -14,17 +14,17 @@
 
 #property indicator_label1 "SMA82"
 #property indicator_type1 DRAW_LINE
-#property indicator_color1 clrBlue     // Color for the SMA line
+#property indicator_color1 clrBlue    
 #property indicator_width1 2
 
 #property indicator_label2 "Safety Net"
 #property indicator_type2 DRAW_LINE
-#property indicator_color2 clrAqua     // Safety net line color
+#property indicator_color2 clrAqua     
 #property indicator_width2 2
 
 // Indicator buffers
 double SMA82Buffer[];
-double SafetyNetBuffer[];               // Buffer for safety net values
+double SafetyNetBuffer[];               
 
 // Indicator handle
 int handleSMA82;
@@ -82,7 +82,7 @@ int OnCalculate(const int rates_total, const int prev_calculated,
     // Calculate safety net values
     for (int i = 0; i < rates_total; i++)
     {
-        SafetyNetBuffer[i] = SMA82Buffer[i] * 0.99;  // Adjust safety net value as needed
+        SafetyNetBuffer[i] = SMA82Buffer[i] * 0.99;  
         Print("SMA82 Value: ", SMA82Buffer[i], ", Safety Net Value: ", SafetyNetBuffer[i]);
     }
 
@@ -103,61 +103,52 @@ struct Candlestick
 Candlestick candlesAfterCandleZeroArray[5];  
 int candleCount = 0;
 
-// Declare a variable to store the time when the bearish candle was detected
-datetime bearishCandleTime = 0;  // Initialize to zero
-bool isBearishCandleDetected = false;  // Flag to check if bearish candle is detected
+datetime bearishCandleTime = 0;  
+bool isBearishCandleDetected = false;  
 
-// Function to check if a bearish candle's close is below the SMA
 bool IsBearishOpenBelowSMA(double candleClose, double smaValue, datetime currentCandleTime)
 {
-    // Check if a bearish candle's close is below the SMA
     if (candleClose < smaValue)
     {
         if (!isBearishCandleDetected)
         {
-            // First time detecting a bearish candle, store the time
             bearishCandleTime = currentCandleTime;
-            isBearishCandleDetected = true;  // Set the flag
+            isBearishCandleDetected = true;  
             Print("Bearish candle detected. Waiting for 5 minutes before re-evaluating.");
-            return false;  // Don't block immediately, wait 5 minutes
+            return false;  
         }
         else
         {
-            // Check if 5 minutes have passed since the bearish candle was detected
-            if (currentCandleTime >= bearishCandleTime + 3000)  // 5 minutes = 300 seconds
+            if (currentCandleTime >= bearishCandleTime + 3000)  
             {
                 Print("5 minutes have passed since bearish candle detection. Evaluating conditions.");
-                isBearishCandleDetected = false;  // Reset after evaluation
-                return true;  // After 5 minutes, we can block the buy if still valid
+                isBearishCandleDetected = false;  
+                return true; 
             }
             else
             {
                 Print("Still within 5 minutes wait period. Not evaluating yet.");
-                return false;  // Still within the 5-minute window, do nothing
+                return false;  
             }
         }
     }
-    
-    // Reset the bearish candle detection if conditions are not met
     isBearishCandleDetected = false;
     return false;
 }
 
 void OnTick()
 {
-    // Fetch the current and previous SMA values
     double smaValueCurrent = 0.0;
     double smaValuePrevious = 0.0;
 
-    // Fetch the last two SMA values
     if (CopyBuffer(handleSMA82, 0, 0, 2, SMA82Buffer) <= 0)
     {
         Print("Failed to copy SMA buffer. Error code: ", GetLastError());
         return;
     }
 
-    smaValueCurrent = SMA82Buffer[0];  // Current SMA value
-    smaValuePrevious = SMA82Buffer[1];  // Previous SMA value
+    smaValueCurrent = SMA82Buffer[0];  
+    smaValuePrevious = SMA82Buffer[1];  
 
     double askPrice = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
     double currentClosePrice = iClose(Symbol(), 0, 0);
@@ -165,9 +156,8 @@ void OnTick()
     double previousClosePrice = iClose(Symbol(), 0, 1);
     double currentLowPrice = iLow(Symbol(), 0, 0);
     double currentHighPrice = iHigh(Symbol(), 0, 0);
-    datetime currentTime = iTime(Symbol(), 0, 0);  // Get current candle time
+    datetime currentTime = iTime(Symbol(), 0, 0);  
 
-    // Check if there's an existing long position
     bool hasLongPosition = false;
     ulong positionTicket = 0;
 
@@ -182,7 +172,7 @@ void OnTick()
             if (!buyPositionLogged || currentBuyPrice != lastBuyPrice)
             {
                 lastBuyPrice = currentBuyPrice;
-                takeProfitPrice = lastBuyPrice * 1.005;  // Adjust TP as needed
+                takeProfitPrice = lastBuyPrice * 1.005;  
                 Print("Active BUY position found. Last Buy Price: ", lastBuyPrice, ", Take Profit set at: ", takeProfitPrice);
                 buyPositionLogged = true;
             }
@@ -190,10 +180,10 @@ void OnTick()
             // Check if the take profit condition is met
             if (currentClosePrice >= takeProfitPrice)
             {
-                ClosePosition(positionTicket); // Close the position
-                takeProfitReached = true; // Set the take profit reached flag
+                ClosePosition(positionTicket); 
+                takeProfitReached = true; 
                 Print("Take Profit reached at: ", takeProfitPrice);
-                buyPositionLogged = false; // Reset after take profit
+                buyPositionLogged = false;
             }
             break;
         }
@@ -203,8 +193,8 @@ void OnTick()
     if (!hasLongPosition)
     {
         buyPositionLogged = false;
-        canOpenNewBuy = true;  // Reset to allow opening new buys
-        takeProfitReached = false; // Reset take profit flag
+        canOpenNewBuy = true;  
+        takeProfitReached = false; 
     }
 
     // Conditions to check for a bullish signal
@@ -212,32 +202,25 @@ void OnTick()
     bool isBodyTouchesSMA = (currentLowPrice <= smaValueCurrent) && (currentHighPrice > smaValueCurrent);
     bool isBullishCrossover = (previousClosePrice < smaValuePrevious) && (currentClosePrice > smaValueCurrent);
 
-    // Count candles after a significant bullish crossover
     static bool isCandleZeroFound = false;
 
-    // Define a new variable to indicate counting state
     bool isCountingCandles = false;
     
-    // Check for "Candle Zero" only if no open position exists and criteria met
     if (!hasLongPosition && !isCountingCandles && isBodyTouchesSMA && isBullishCrossover && isBullishCandle)
     {
-        isCandleZeroFound = true;  // First bullish candle touching SMA
-        candleCount = 0;  // Reset candle counter
-        isCountingCandles = true; // Start counting candles after "Candle Zero"
+        isCandleZeroFound = true;  
+        candleCount = 0;  
+        isCountingCandles = true; 
         Print("Candle Zero found, starting to record candles after SMA crossover.");
     }
 
-    // Logic for recording candles and opening buy position
     if (isCandleZeroFound)
     {
-        // Track if any candle closed above the SMA
-        bool anyCandleAboveSMA = false; // Flag to check if any candle has closed above SMA
+        bool anyCandleAboveSMA = false; 
 
-        // Check if the current candle's close price is above the SMA
         if (currentClosePrice > smaValueCurrent)  
         {
-            // Store candle data in the array
-            if (candleCount < 5)  // Record up to 5 candles
+            if (candleCount < 5)  
             {
                 candlesAfterCandleZeroArray[candleCount].open = currentOpenPrice;
                 candlesAfterCandleZeroArray[candleCount].high = currentHighPrice;
@@ -265,7 +248,7 @@ void OnTick()
         if (candleCount >= 5)
         {
             // Set criteria for the last candle in the array
-            criteria = (candlesAfterCandleZeroArray[4].close > smaValueCurrent); // Check if the last recorded candle closed above the SMA
+            criteria = (candlesAfterCandleZeroArray[4].close > smaValueCurrent);
 
             // Open position only if at least one candle closed above the SMA and no bearish open price is below the SMA
             if (anyCandleAboveSMA && canOpenNewBuy && criteria && !IsBearishOpenBelowSMA(currentClosePrice, smaValueCurrent, currentTime)) 
