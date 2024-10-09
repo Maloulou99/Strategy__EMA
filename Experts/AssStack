@@ -99,9 +99,49 @@ struct Candlestick
     datetime time;
 };
 
-// Define an array to store the candlestick objects
-Candlestick candlesAfterCandleZeroArray[5];  // Store last 5 candles after Candle Zero
-int candleCount = 0;  // To keep track of the number of candles added
+
+Candlestick candlesAfterCandleZeroArray[5];  
+int candleCount = 0;
+
+// Declare a variable to store the time when the bearish candle was detected
+datetime bearishCandleTime = 0;  // Initialize to zero
+bool isBearishCandleDetected = false;  // Flag to check if bearish candle is detected
+
+// Function to check if a bearish candle's close is below the SMA
+bool IsBearishOpenBelowSMA(double candleClose, double smaValue, datetime currentCandleTime)
+{
+    // Check if a bearish candle's close is below the SMA
+    if (candleClose < smaValue)
+    {
+        if (!isBearishCandleDetected)
+        {
+            // First time detecting a bearish candle, store the time
+            bearishCandleTime = currentCandleTime;
+            isBearishCandleDetected = true;  // Set the flag
+            Print("Bearish candle detected. Waiting for 5 minutes before re-evaluating.");
+            return false;  // Don't block immediately, wait 5 minutes
+        }
+        else
+        {
+            // Check if 5 minutes have passed since the bearish candle was detected
+            if (currentCandleTime >= bearishCandleTime + 3000)  // 5 minutes = 300 seconds
+            {
+                Print("5 minutes have passed since bearish candle detection. Evaluating conditions.");
+                isBearishCandleDetected = false;  // Reset after evaluation
+                return true;  // After 5 minutes, we can block the buy if still valid
+            }
+            else
+            {
+                Print("Still within 5 minutes wait period. Not evaluating yet.");
+                return false;  // Still within the 5-minute window, do nothing
+            }
+        }
+    }
+    
+    // Reset the bearish candle detection if conditions are not met
+    isBearishCandleDetected = false;
+    return false;
+}
 
 void OnTick()
 {
@@ -165,7 +205,6 @@ void OnTick()
         buyPositionLogged = false;
         canOpenNewBuy = true;  // Reset to allow opening new buys
         takeProfitReached = false; // Reset take profit flag
-        
     }
 
     // Conditions to check for a bullish signal
@@ -189,60 +228,60 @@ void OnTick()
     }
 
     // Logic for recording candles and opening buy position
-if (isCandleZeroFound)
-{
-    // Track if any candle closed above the SMA
-    bool anyCandleAboveSMA = false; // Flag to check if any candle has closed above SMA
-
-    // Check if the current candle's close price is above the SMA
-    if (currentClosePrice > smaValueCurrent)  
+    if (isCandleZeroFound)
     {
-        // Store candle data in the array
-        if (candleCount < 5)  // Record up to 5 candles
+        // Track if any candle closed above the SMA
+        bool anyCandleAboveSMA = false; // Flag to check if any candle has closed above SMA
+
+        // Check if the current candle's close price is above the SMA
+        if (currentClosePrice > smaValueCurrent)  
         {
-            candlesAfterCandleZeroArray[candleCount].open = currentOpenPrice;
-            candlesAfterCandleZeroArray[candleCount].high = currentHighPrice;
-            candlesAfterCandleZeroArray[candleCount].low = currentLowPrice;
-            candlesAfterCandleZeroArray[candleCount].close = currentClosePrice;
-            candlesAfterCandleZeroArray[candleCount].time = currentTime;
+            // Store candle data in the array
+            if (candleCount < 5)  // Record up to 5 candles
+            {
+                candlesAfterCandleZeroArray[candleCount].open = currentOpenPrice;
+                candlesAfterCandleZeroArray[candleCount].high = currentHighPrice;
+                candlesAfterCandleZeroArray[candleCount].low = currentLowPrice;
+                candlesAfterCandleZeroArray[candleCount].close = currentClosePrice;
+                candlesAfterCandleZeroArray[candleCount].time = currentTime;
 
-            Print("Candle ", candleCount + 1, " recorded: Open=", currentOpenPrice, ", High=", currentHighPrice, ", Low=", currentLowPrice, ", Close=", currentClosePrice);
-            candleCount++;
+                Print("Candle ", candleCount + 1, " recorded: Open=", currentOpenPrice, ", High=", currentHighPrice, ", Low=", currentLowPrice, ", Close=", currentClosePrice);
+                candleCount++;
 
-            // Set the flag if this candle closed above the SMA
-            anyCandleAboveSMA = true; 
-        }
-    }
-    else
-    {
-        // If the close price is not above the SMA, reset
-        Print("Candle conditions failed (close below SMA), resetting count and Candle Zero flag.");
-        isCandleZeroFound = false;  // Reset Candle Zero flag
-        candleCount = 0;  // Reset counter
-        return; // Exit early if the condition fails
-    }
-    
-    // Check and open a buy on the 5th candle if conditions are met
-    if (candleCount >= 5)
-    {
-        // Set criteria for the last candle in the array
-        criteria = (candlesAfterCandleZeroArray[4].close > smaValueCurrent); // Check if the last recorded candle closed above the SMA
-
-        // Open position only if at least one candle closed above the SMA
-        if (anyCandleAboveSMA && canOpenNewBuy && criteria) // Include criteria in the condition
-        {
-            OpenPosition(ORDER_TYPE_BUY, 0.1, askPrice, "Open Buy Position " + IntegerToString(candleCount) + " candles.");
-            canOpenNewBuy = false; // Prevent opening new buys until reset
-            Print("Buy position opened after 5 bullish candles.");
+                // Set the flag if this candle closed above the SMA
+                anyCandleAboveSMA = true; 
+            }
         }
         else
         {
-            Print("Conditions for opening buy position not met.");
-            
+            // If the close price is not above the SMA, reset
+            Print("Candle conditions failed (close below SMA), resetting count and Candle Zero flag.");
+            isCandleZeroFound = false;  // Reset Candle Zero flag
+            candleCount = 0;  // Reset counter
+            return; // Exit early if the condition fails
+        }
+        
+        // Check and open a buy on the 5th candle if conditions are met
+        if (candleCount >= 5)
+        {
+            // Set criteria for the last candle in the array
+            criteria = (candlesAfterCandleZeroArray[4].close > smaValueCurrent); // Check if the last recorded candle closed above the SMA
+
+            // Open position only if at least one candle closed above the SMA and no bearish open price is below the SMA
+            if (anyCandleAboveSMA && canOpenNewBuy && criteria && !IsBearishOpenBelowSMA(currentClosePrice, smaValueCurrent, currentTime)) 
+            {
+                OpenPosition(ORDER_TYPE_BUY, 0.1, askPrice, "Open Buy Position " + IntegerToString(candleCount) + " candles.");
+                canOpenNewBuy = false; // Prevent opening new buys until reset
+                Print("Buy position opened after 5 bullish candles.");
+            }
+            else
+            {
+                Print("Conditions for opening buy position not met.");
+            }
         }
     }
 }
-}
+
 
 
 // Function to open a position
@@ -330,4 +369,5 @@ void ClosePosition(ulong positionTicket)
         Print("Failed to close position. Error code: ", GetLastError());
     }
 }
+
 
