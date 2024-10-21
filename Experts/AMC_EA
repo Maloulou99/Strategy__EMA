@@ -79,49 +79,32 @@ bool IsBearishEngulfing(int index) {
 
 
 void ScanForEngulfingPatterns() {
-    double ema21 = GetEMA21();  
-    int bars = iBars(NULL, 0);  
-  
+    double ema21 = GetEMA21();
+    int bars = iBars(NULL, 0);
+
     for (int i = 1; i < bars - 1; i++) {
-        datetime barTime = iTime(NULL, 0, i);  
-        double barClose = iClose(NULL, 0, i);  
+        datetime barTime = iTime(NULL, 0, i);
+        double barClose = iClose(NULL, 0, i);
 
         if (barTime > lastStartTime && IsBullishEngulfing(i)) {
-            string arrowName = "bullish_engulfing_" + IntegerToString(barTime);
-            Print("Bullish engulfing detected at ", TimeToString(barTime));
+            Print("Bullish engulfing pattern detected at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
         }
         
-        if (barTime > lastStartTime && IsBearishEngulfing(i) && barClose < ema21) {
-            string arrowName = "bearish_engulfing_" + IntegerToString(barTime);
-            //CreateArrow(arrowName, barTime, barClose, clrRed, 234); 
-            Print("Bearish engulfing detected at ", TimeToString(barTime), " and the close price is below EMA21.");
-            CloseAllPositions(); 
-        }
-
-        
-        if (!IsPositionOpen()) {
-            candleCountSinceLastBuy++;
-        } else {
-            candleCountSinceLastBuy = 0;  
-        }
-
-        if (candleCountSinceLastBuy >= 5) {
-            double currentPrice = iClose(NULL, 0, 0);  
-
-            if (currentPrice < ema21) {
-                CloseAllPositions();  
-                Print("Closing all positions after 5 candles without a buy signal and price is below EMA21.");
-            }
-            candleCountSinceLastBuy = 0; 
+        if (barTime > lastStartTime && IsBearishEngulfing(i)) {
+            Print("Bearish engulfing pattern detected at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
         }
     }
 }
 
 
 void FlagCandlesWithArrows() {
-    double ema21 = GetEMA21();
-    int bars = iBars(NULL, 0);
+    double ema21 = GetEMA21();  
+    int bars = iBars(NULL, 0);  
 
+    static double candle0High = 0;
+    static int candleCounter = 0;
+
+    // Opdater last position close price
     if (IsPositionOpen()) {
         for (int i = 0; i < PositionsTotal(); i++) {
             if (PositionSelectByTicket(PositionGetTicket(i))) {
@@ -134,21 +117,42 @@ void FlagCandlesWithArrows() {
     }
 
     for (int i = 1; i < bars; i++) {
-        double closePrice = iClose(NULL, 0, i);
-        double openPrice = iOpen(NULL, 0, i);
-        datetime barTime = iTime(NULL, 0, i);
+        double closePrice = iClose(NULL, 0, i);  
+        double openPrice = iOpen(NULL, 0, i);    
+        double highPrice = iHigh(NULL, 0, i);    
+        datetime barTime = iTime(NULL, 0, i);    
 
-        if (barTime > lastStartTime && closePrice > openPrice && closePrice > ema21 ) {
-            
-                string arrowName = "bullish_candle_" + IntegerToString(barTime);
-                CreateArrow(arrowName, barTime, closePrice, clrBlue, 233); 
-                Print("Bullish candle found above EMA 21 at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
+        // Entry condition: Bullish candle above EMA21 and no open positions
+        if (barTime > lastStartTime && closePrice > openPrice && closePrice > ema21 && openPrice > candle0High && !IsPositionOpen()) {
+            candle0High = highPrice;  
+            string arrowName = "bullish_candle_" + IntegerToString(barTime);
+            CreateArrow(arrowName, barTime, highPrice, clrBlue, 233);  
+            candleCounter = 0;
+            Print("Bullish candle found above EMA 21 at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));   
+        }
 
-             
-            
+      
+        if (candle0High > 0) {
+            candleCounter++;
+
+            // Check if the current candle closes above candle0High
+            if (closePrice > candle0High) {
+                Print("Candle closes above candle 0 high at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
+                candleCounter = 0;  
+                break;  
+            }
+
+            // After 5 candles, close all positions if none of them closes above candle0High
+            if (candleCounter >= 5) {
+                CloseAllPositions();
+                Print("No candle closed above the high of candle 0 after 5 candles, closing all positions.");
+                candleCounter = 0;  
+                candle0High = 0;  
+            }
         }
     }
 }
+
 
 
 void CloseAllPositions() {
@@ -183,41 +187,6 @@ void CloseAllPositions() {
 }
 
 
-
-void HandleCandleCount() {
-    if (IsPositionOpen()) {
-        candleCount++;  
-        Print("Candle Count: ", candleCount);
-      
-        if (IsNewEntryCandle()) {
-            candleCount = 1; 
-            candle0Open = iOpen(NULL, 0, 0);  
-            candle0High = iHigh(NULL, 0, 0);  
-            Print("New entry candle detected - resetting candle count.");
-        } else if (candleCount >= 5) {  
-            Print("Exiting all positions after 5 candles without a buy signal.");
-            CloseAllPositions(); 
-            candleCount = 0; 
-        }
-    } else {
-        candleCount = 0; 
-        candle0High = 0; 
-        candle0Open = 0; 
-    }
-}
-
-
-bool IsNewEntryCandle() {
-    double ema21 = GetEMA21();  
-    bool closeAboveEMA = iClose(NULL, 0, 0) > ema21;
-    bool closeHigherThanPrevious = iClose(NULL, 0, 0) > iClose(NULL, 0, 1);
-   
-    if (closeAboveEMA && closeHigherThanPrevious) {
-        Print("New entry candle found: Close is above EMA21 and higher than the previous candle.");
-        return true;
-    }
-    return false;  
-}
 
 
 int OnInit() {
