@@ -8,14 +8,11 @@
 #define EMA_PERIOD 21
 #define HA_PERIOD 5
 
-
-
-
 datetime lastOpenTime = 0; 
 ulong positionTicket = 0; 
 datetime lastStartTime; 
 int totalCandleCount = 0;
-double candle0HighWick;
+
 double lastPositionClosePrice = 0;
 int candleCount = 0; 
 double candle0High = 0; 
