@@ -8,17 +8,11 @@
 #define EMA_PERIOD 21
 #define HA_PERIOD 5
 
-// Variable to store the latest EMA value
-double latestEMA21;
-datetime lastEntryTime = 0;
 
-double lastBuyOpenPrice = 0;
-double lastBuyHighWick = 0;
-bool isEAInitialized = false; 
-int followUpCandleCount = 0;
+
+
 datetime lastOpenTime = 0; 
 ulong positionTicket = 0; 
-int redFlagCount = 0;
 datetime lastStartTime; 
 int totalCandleCount = 0;
 double candle0HighWick;
@@ -34,16 +28,14 @@ void UpdateLastOpenTime() {
     }
 }
 
-bool CheckFollowUpCandles(int maxCandles) {
-    int validCount = 0;
-    for (int i = 1; i <= maxCandles; i++) {
-        if (iClose(NULL, 0, i) > iOpen(NULL, 0, i) && iOpen(NULL, 0, i) > candle0HighWick) {
-            validCount++;
-        } else {
-            break;
-        }
+void CreateArrow(string name, datetime time, double price, color clr, int arrowCode) {
+    if (ObjectCreate(0, name, OBJ_ARROW, 0, time, price)) {
+        ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+        ObjectSetInteger(0, name, OBJPROP_ARROWCODE, arrowCode);  
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);  
+    } else {
+        Print("Error creating arrow on chart: ", name);
     }
-    return validCount == maxCandles;
 }
 
 // Calculate EMA 21 for Japanese candlesticks
@@ -64,24 +56,6 @@ bool IsPositionOpen() {
         }
     }
     return false;
-}
-
-bool IsEntryCondition() {
-    bool isGreenCandle = iClose(NULL, 0, 0) > iOpen(NULL, 0, 0);
-    Print("IsEntryCondition - isGreenCandle: ", isGreenCandle);
-  
-    if (!isGreenCandle) {
-        return false; 
-    }
-
-    double ema_21 = GetEMA21();
-    bool isAboveEMA = iClose(NULL, 0, 0) > ema_21; 
-    Print("IsEntryCondition - isAboveEMA: ", isAboveEMA);
-
-    bool isOpenAboveLastBuyHigh = iOpen(NULL, 0, 0) > lastBuyHighWick;
-    Print("IsEntryCondition - isOpenAboveLastBuyHigh: ", isOpenAboveLastBuyHigh);
-
-    return isGreenCandle && isAboveEMA && isOpenAboveLastBuyHigh;
 }
 
 bool IsBullishEngulfing(int index) {
@@ -106,20 +80,14 @@ bool IsBearishEngulfing(int index) {
     return isPrevBullish && isCurrentBearish && engulfs;
 }
 
-int OnInit() {
-    lastStartTime = TimeCurrent(); 
-    Print("System started at: ", TimeToString(lastStartTime));
-    totalCandleCount = 0; 
-    return INIT_SUCCEEDED;
-}
 
 void ScanForEngulfingPatterns() {
-    double ema21 = GetEMA21();
-    int bars = iBars(NULL, 0);
+    double ema21 = GetEMA21();  
+    int bars = iBars(NULL, 0);  
   
     for (int i = 1; i < bars - 1; i++) {
-        datetime barTime = iTime(NULL, 0, i);
-        double barClose = iClose(NULL, 0, i);
+        datetime barTime = iTime(NULL, 0, i);  
+        double barClose = iClose(NULL, 0, i);  
 
         if (barTime > lastStartTime && IsBullishEngulfing(i)) {
             string arrowName = "bullish_engulfing_" + IntegerToString(barTime);
@@ -128,25 +96,29 @@ void ScanForEngulfingPatterns() {
         
         if (barTime > lastStartTime && IsBearishEngulfing(i) && barClose < ema21) {
             string arrowName = "bearish_engulfing_" + IntegerToString(barTime);
-            CreateArrow(arrowName, barTime, barClose, clrRed, 234); 
+            //CreateArrow(arrowName, barTime, barClose, clrRed, 234); 
             Print("Bearish engulfing detected at ", TimeToString(barTime), " and the close price is below EMA21.");
             CloseAllPositions(); 
         }
+
         
         if (!IsPositionOpen()) {
             candleCountSinceLastBuy++;
         } else {
-            candleCountSinceLastBuy = 0; 
+            candleCountSinceLastBuy = 0;  
         }
 
         if (candleCountSinceLastBuy >= 5) {
-            CloseAllPositions();
-            Print("Closing all positions after 5 candles without a buy signal");
-            candleCountSinceLastBuy = 0;
+            double currentPrice = iClose(NULL, 0, 0);  
+
+            if (currentPrice < ema21) {
+                CloseAllPositions();  
+                Print("Closing all positions after 5 candles without a buy signal and price is below EMA21.");
+            }
+            candleCountSinceLastBuy = 0; 
         }
     }
 }
-
 
 
 void FlagCandlesWithArrows() {
@@ -162,7 +134,6 @@ void FlagCandlesWithArrows() {
         }
     } else {
         lastPositionClosePrice = 0;
-        CloseAllPositions();
     }
 
     for (int i = 1; i < bars; i++) {
@@ -170,25 +141,18 @@ void FlagCandlesWithArrows() {
         double openPrice = iOpen(NULL, 0, i);
         datetime barTime = iTime(NULL, 0, i);
 
-        if (barTime > lastStartTime && closePrice > openPrice && closePrice > ema21 && openPrice > candle0HighWick) {
-            if (ema21 > 0 && (lastPositionClosePrice == 0 || closePrice > lastPositionClosePrice)) {
+        if (barTime > lastStartTime && closePrice > openPrice && closePrice > ema21 ) {
+            
                 string arrowName = "bullish_candle_" + IntegerToString(barTime);
                 CreateArrow(arrowName, barTime, closePrice, clrBlue, 233); 
                 Print("Bullish candle found above EMA 21 at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
-            }
+
+             
+            
         }
     }
 }
 
-void CreateArrow(string name, datetime time, double price, color clr, int arrowCode) {
-    if (ObjectCreate(0, name, OBJ_ARROW, 0, time, price)) {
-        ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
-        ObjectSetInteger(0, name, OBJPROP_ARROWCODE, arrowCode);  
-        ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);  
-    } else {
-        Print("Error creating arrow on chart: ", name);
-    }
-}
 
 void CloseAllPositions() {
     MqlTradeRequest closeRequest = {};
@@ -221,41 +185,7 @@ void CloseAllPositions() {
     }
 }
 
-void EnterBuyPosition() {
-    if (IsPositionOpen()) {
-        return;
-    }
 
-    if (IsEntryCondition()) {
-        if (iOpen(NULL, 0, 0) > candle0HighWick && CheckFollowUpCandles(HA_PERIOD)) {
-            double volume = 0.1;  
-            MqlTradeRequest request;
-            MqlTradeResult result;
-
-            request.action = TRADE_ACTION_DEAL;
-            request.symbol = Symbol();
-            request.volume = volume;
-            request.type = ORDER_TYPE_BUY;
-            request.tp = 0;
-            request.sl = GetEMA21();  
-
-            if (!OrderSend(request, result)) {
-                Print("Error opening buy position: ", result.retcode);
-            } else {
-                lastBuyOpenPrice = iOpen(NULL, 0, 0);  
-                lastBuyHighWick = iHigh(NULL, 0, 0);  
-                followUpCandleCount = 0; 
-                Print("Buy position opened successfully.");
-                HandleCandleCount();
-                UpdateLastOpenTime(); 
-            }
-        } else {
-            Print("Not entering Buy Position: Follow-up candles do not meet criteria.");
-        }
-    } else {
-        Print("Not entering Buy Position: Entry conditions not met.");
-    }
-}
 
 void HandleCandleCount() {
     if (IsPositionOpen()) {
@@ -293,7 +223,15 @@ bool IsNewEntryCandle() {
 }
 
 
+int OnInit() {
+    lastStartTime = TimeCurrent(); 
+    Print("System started at: ", TimeToString(lastStartTime));
+    totalCandleCount = 0; 
+    return INIT_SUCCEEDED;
+}
+
 void OnTick() {
     ScanForEngulfingPatterns();
     FlagCandlesWithArrows();
+    
 }
