@@ -1,0 +1,299 @@
+//+------------------------------------------------------------------+
+//|                                                  AMC_EA.mq5      |
+//|                        Copyright 2024, Your Name                 |
+//|                                      https://www.yourwebsite.com |
+//+------------------------------------------------------------------+
+
+// Define EMA period
+#define EMA_PERIOD 21
+#define HA_PERIOD 5
+
+// Variable to store the latest EMA value
+double latestEMA21;
+datetime lastEntryTime = 0;
+
+double lastBuyOpenPrice = 0;
+double lastBuyHighWick = 0;
+bool isEAInitialized = false; 
+int followUpCandleCount = 0;
+datetime lastOpenTime = 0; 
+ulong positionTicket = 0; 
+int redFlagCount = 0;
+datetime lastStartTime; 
+int totalCandleCount = 0;
+double candle0HighWick;
+double lastPositionClosePrice = 0;
+int candleCount = 0; 
+double candle0High = 0; 
+double candle0Open = 0; 
+int candleCountSinceLastBuy = 0; 
+
+void UpdateLastOpenTime() {
+    if (IsPositionOpen()) {
+        lastOpenTime = TimeCurrent(); 
+    }
+}
+
+bool CheckFollowUpCandles(int maxCandles) {
+    int validCount = 0;
+    for (int i = 1; i <= maxCandles; i++) {
+        if (iClose(NULL, 0, i) > iOpen(NULL, 0, i) && iOpen(NULL, 0, i) > candle0HighWick) {
+            validCount++;
+        } else {
+            break;
+        }
+    }
+    return validCount == maxCandles;
+}
+
+// Calculate EMA 21 for Japanese candlesticks
+double GetEMA21() {
+    double emaBuffer[];
+    if (CopyBuffer(iMA(NULL, 0, EMA_PERIOD, 0, MODE_EMA, PRICE_CLOSE), 0, 0, 1, emaBuffer) < 0) {
+        Print("Error copying EMA buffer: ", GetLastError());
+        return 0.0; 
+    }
+    return emaBuffer[0]; 
+}
+
+// Check if there is already an open position
+bool IsPositionOpen() {
+    for (int i = 0; i < PositionsTotal(); i++) {
+        if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
+            return true; 
+        }
+    }
+    return false;
+}
+
+bool IsEntryCondition() {
+    bool isGreenCandle = iClose(NULL, 0, 0) > iOpen(NULL, 0, 0);
+    Print("IsEntryCondition - isGreenCandle: ", isGreenCandle);
+  
+    if (!isGreenCandle) {
+        return false; 
+    }
+
+    double ema_21 = GetEMA21();
+    bool isAboveEMA = iClose(NULL, 0, 0) > ema_21; 
+    Print("IsEntryCondition - isAboveEMA: ", isAboveEMA);
+
+    bool isOpenAboveLastBuyHigh = iOpen(NULL, 0, 0) > lastBuyHighWick;
+    Print("IsEntryCondition - isOpenAboveLastBuyHigh: ", isOpenAboveLastBuyHigh);
+
+    return isGreenCandle && isAboveEMA && isOpenAboveLastBuyHigh;
+}
+
+bool IsBullishEngulfing(int index) {
+    double prevOpen = iOpen(NULL, 0, index + 1);
+    double prevClose = iClose(NULL, 0, index + 1);
+    double currentOpen = iOpen(NULL, 0, index);
+    double currentClose = iClose(NULL, 0, index);
+    bool isPrevBearish = prevClose < prevOpen;
+    bool isCurrentBullish = currentClose > currentOpen;
+    bool engulfs = currentOpen < prevClose && currentClose > prevOpen;
+    return isPrevBearish && isCurrentBullish && engulfs;
+}
+
+bool IsBearishEngulfing(int index) {
+    double prevOpen = iOpen(NULL, 0, index + 1);
+    double prevClose = iClose(NULL, 0, index + 1);
+    double currentOpen = iOpen(NULL, 0, index);
+    double currentClose = iClose(NULL, 0, index);
+    bool isPrevBullish = prevClose > prevOpen;
+    bool isCurrentBearish = currentClose < currentOpen;
+    bool engulfs = currentOpen > prevClose && currentClose < prevOpen;
+    return isPrevBullish && isCurrentBearish && engulfs;
+}
+
+int OnInit() {
+    lastStartTime = TimeCurrent(); 
+    Print("System started at: ", TimeToString(lastStartTime));
+    totalCandleCount = 0; 
+    return INIT_SUCCEEDED;
+}
+
+void ScanForEngulfingPatterns() {
+    double ema21 = GetEMA21();
+    int bars = iBars(NULL, 0);
+  
+    for (int i = 1; i < bars - 1; i++) {
+        datetime barTime = iTime(NULL, 0, i);
+        double barClose = iClose(NULL, 0, i);
+
+        if (barTime > lastStartTime && IsBullishEngulfing(i)) {
+            string arrowName = "bullish_engulfing_" + IntegerToString(barTime);
+            Print("Bullish engulfing detected at ", TimeToString(barTime));
+        }
+        
+        if (barTime > lastStartTime && IsBearishEngulfing(i) && barClose < ema21) {
+            string arrowName = "bearish_engulfing_" + IntegerToString(barTime);
+            CreateArrow(arrowName, barTime, barClose, clrRed, 234); 
+            Print("Bearish engulfing detected at ", TimeToString(barTime), " and the close price is below EMA21.");
+            CloseAllPositions(); 
+        }
+        
+        if (!IsPositionOpen()) {
+            candleCountSinceLastBuy++;
+        } else {
+            candleCountSinceLastBuy = 0; 
+        }
+
+        if (candleCountSinceLastBuy >= 5) {
+            CloseAllPositions();
+            Print("Closing all positions after 5 candles without a buy signal");
+            candleCountSinceLastBuy = 0;
+        }
+    }
+}
+
+
+
+void FlagCandlesWithArrows() {
+    double ema21 = GetEMA21();
+    int bars = iBars(NULL, 0);
+
+    if (IsPositionOpen()) {
+        for (int i = 0; i < PositionsTotal(); i++) {
+            if (PositionSelectByTicket(PositionGetTicket(i))) {
+                lastPositionClosePrice = PositionGetDouble(POSITION_PRICE_OPEN); 
+                break; 
+            }
+        }
+    } else {
+        lastPositionClosePrice = 0;
+        CloseAllPositions();
+    }
+
+    for (int i = 1; i < bars; i++) {
+        double closePrice = iClose(NULL, 0, i);
+        double openPrice = iOpen(NULL, 0, i);
+        datetime barTime = iTime(NULL, 0, i);
+
+        if (barTime > lastStartTime && closePrice > openPrice && closePrice > ema21 && openPrice > candle0HighWick) {
+            if (ema21 > 0 && (lastPositionClosePrice == 0 || closePrice > lastPositionClosePrice)) {
+                string arrowName = "bullish_candle_" + IntegerToString(barTime);
+                CreateArrow(arrowName, barTime, closePrice, clrBlue, 233); 
+                Print("Bullish candle found above EMA 21 at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
+            }
+        }
+    }
+}
+
+void CreateArrow(string name, datetime time, double price, color clr, int arrowCode) {
+    if (ObjectCreate(0, name, OBJ_ARROW, 0, time, price)) {
+        ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+        ObjectSetInteger(0, name, OBJPROP_ARROWCODE, arrowCode);  
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);  
+    } else {
+        Print("Error creating arrow on chart: ", name);
+    }
+}
+
+void CloseAllPositions() {
+    MqlTradeRequest closeRequest = {};
+    MqlTradeResult closeResult = {};
+
+    if (PositionsTotal() > 0) {
+        for (int i = 0; i < PositionsTotal(); i++) {
+            if (PositionSelectByTicket(PositionGetTicket(i))) {
+                positionTicket = PositionGetTicket(i);
+                ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+                closeRequest.action = TRADE_ACTION_DEAL;
+                closeRequest.position = positionTicket;
+                closeRequest.symbol = Symbol();
+                closeRequest.volume = PositionGetDouble(POSITION_VOLUME);
+                closeRequest.type = posType == POSITION_TYPE_BUY ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+                closeRequest.price = SymbolInfoDouble(Symbol(), posType == POSITION_TYPE_BUY ? SYMBOL_BID : SYMBOL_ASK);
+                closeRequest.deviation = 10;
+                closeRequest.type_filling = ORDER_FILLING_FOK;
+                closeRequest.comment = "Close Position";
+
+                if (OrderSend(closeRequest, closeResult)) {
+                    Print("Position closed. Order number: ", closeResult.order);
+                    CreateArrow("exit_candle_" + IntegerToString(TimeCurrent()), iTime(NULL, 0, 0), iClose(NULL, 0, 0), clrRed, 234); 
+                } else {
+                    Print("Failed to close position. Error code: ", GetLastError());
+                }
+            }
+        }
+    }
+}
+
+void EnterBuyPosition() {
+    if (IsPositionOpen()) {
+        return;
+    }
+
+    if (IsEntryCondition()) {
+        if (iOpen(NULL, 0, 0) > candle0HighWick && CheckFollowUpCandles(HA_PERIOD)) {
+            double volume = 0.1;  
+            MqlTradeRequest request;
+            MqlTradeResult result;
+
+            request.action = TRADE_ACTION_DEAL;
+            request.symbol = Symbol();
+            request.volume = volume;
+            request.type = ORDER_TYPE_BUY;
+            request.tp = 0;
+            request.sl = GetEMA21();  
+
+            if (!OrderSend(request, result)) {
+                Print("Error opening buy position: ", result.retcode);
+            } else {
+                lastBuyOpenPrice = iOpen(NULL, 0, 0);  
+                lastBuyHighWick = iHigh(NULL, 0, 0);  
+                followUpCandleCount = 0; 
+                Print("Buy position opened successfully.");
+                HandleCandleCount();
+                UpdateLastOpenTime(); 
+            }
+        } else {
+            Print("Not entering Buy Position: Follow-up candles do not meet criteria.");
+        }
+    } else {
+        Print("Not entering Buy Position: Entry conditions not met.");
+    }
+}
+
+void HandleCandleCount() {
+    if (IsPositionOpen()) {
+        candleCount++;  
+        Print("Candle Count: ", candleCount);
+      
+        if (IsNewEntryCandle()) {
+            candleCount = 1; 
+            candle0Open = iOpen(NULL, 0, 0);  
+            candle0High = iHigh(NULL, 0, 0);  
+            Print("New entry candle detected - resetting candle count.");
+        } else if (candleCount >= 5) {  
+            Print("Exiting all positions after 5 candles without a buy signal.");
+            CloseAllPositions(); 
+            candleCount = 0; 
+        }
+    } else {
+        candleCount = 0; 
+        candle0High = 0; 
+        candle0Open = 0; 
+    }
+}
+
+
+bool IsNewEntryCandle() {
+    double ema21 = GetEMA21();  
+    bool closeAboveEMA = iClose(NULL, 0, 0) > ema21;
+    bool closeHigherThanPrevious = iClose(NULL, 0, 0) > iClose(NULL, 0, 1);
+   
+    if (closeAboveEMA && closeHigherThanPrevious) {
+        Print("New entry candle found: Close is above EMA21 and higher than the previous candle.");
+        return true;
+    }
+    return false;  
+}
+
+
+void OnTick() {
+    ScanForEngulfingPatterns();
+    FlagCandlesWithArrows();
+}
