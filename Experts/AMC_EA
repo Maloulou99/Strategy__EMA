@@ -1,203 +1,206 @@
 //+------------------------------------------------------------------+
-//|                                                  AMC_EA.mq5      |
-//|                        Copyright 2024, Your Name                 |
-//|                                      https://www.yourwebsite.com |
-//+------------------------------------------------------------------+
+//|                                                  AMC_EA.mq5      | 
+//|                        Copyright 2024, Your Name                 | 
+//|                                      https://www.yourwebsite.com | 
+//+------------------------------------------------------------------+ 
 
-// Define EMA period
-#define EMA_PERIOD 21
-#define HA_PERIOD 5
+#define EMA_PERIOD 21 
+#define HA_PERIOD 5 
 
 datetime lastOpenTime = 0; 
 ulong positionTicket = 0; 
 datetime lastStartTime; 
-int totalCandleCount = 0;
+int totalCandleCount = 0; 
 
-double lastPositionClosePrice = 0;
-int candleCount = 0; 
+double lastPositionClosePrice = 0; 
+int candleCounter = 0; 
 double candle0High = 0; 
-double candle0Open = 0; 
-int candleCountSinceLastBuy = 0; 
+bool hasRedArrowBeenCreated = false; 
+datetime lastCandleTime = 0; 
+bool positionOpened = false; 
+bool hasClosedPosition = false; 
 
-void UpdateLastOpenTime() {
-    if (IsPositionOpen()) {
+void UpdateLastOpenTime() { 
+    if (IsPositionOpen()) { 
         lastOpenTime = TimeCurrent(); 
+        positionOpened = true; 
+    } else {
+        positionOpened = false; 
     }
 }
 
-void CreateArrow(string name, datetime time, double price, color clr, int arrowCode) {
-    if (ObjectCreate(0, name, OBJ_ARROW, 0, time, price)) {
-        ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+void CreateArrow(string name, datetime time, double price, color clr, int arrowCode) { 
+    if (ObjectCreate(0, name, OBJ_ARROW, 0, time, price)) { 
+        ObjectSetInteger(0, name, OBJPROP_COLOR, clr); 
         ObjectSetInteger(0, name, OBJPROP_ARROWCODE, arrowCode);  
         ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);  
-    } else {
-        Print("Error creating arrow on chart: ", name);
-    }
+    } else { 
+        Print("Error creating arrow on chart: ", name); 
+    } 
 }
 
-// Calculate EMA 21 for Japanese candlesticks
-double GetEMA21() {
-    double emaBuffer[];
-    if (CopyBuffer(iMA(NULL, 0, EMA_PERIOD, 0, MODE_EMA, PRICE_CLOSE), 0, 0, 1, emaBuffer) < 0) {
-        Print("Error copying EMA buffer: ", GetLastError());
+// Calculate EMA 21 for Japanese candlesticks 
+double GetEMA21() { 
+    double emaBuffer[]; 
+    if (CopyBuffer(iMA(NULL, 0, EMA_PERIOD, 0, MODE_EMA, PRICE_CLOSE), 0, 0, 1, emaBuffer) < 0) { 
+        Print("Error copying EMA buffer: ", GetLastError()); 
         return 0.0; 
-    }
+    } 
     return emaBuffer[0]; 
 }
 
-// Check if there is already an open position
-bool IsPositionOpen() {
-    for (int i = 0; i < PositionsTotal(); i++) {
-        if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
+// Check if there is already an open position 
+bool IsPositionOpen() { 
+    for (int i = 0; i < PositionsTotal(); i++) { 
+        if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) { 
             return true; 
-        }
-    }
-    return false;
+        } 
+    } 
+    return false; 
 }
 
-bool IsBullishEngulfing(int index) {
-    double prevOpen = iOpen(NULL, 0, index + 1);
-    double prevClose = iClose(NULL, 0, index + 1);
-    double currentOpen = iOpen(NULL, 0, index);
-    double currentClose = iClose(NULL, 0, index);
-    bool isPrevBearish = prevClose < prevOpen;
-    bool isCurrentBullish = currentClose > currentOpen;
-    bool engulfs = currentOpen < prevClose && currentClose > prevOpen;
-    return isPrevBearish && isCurrentBullish && engulfs;
+bool IsBullishEngulfing(int index) { 
+    double prevOpen = iOpen(NULL, 0, index + 1); 
+    double prevClose = iClose(NULL, 0, index + 1); 
+    double currentOpen = iOpen(NULL, 0, index); 
+    double currentClose = iClose(NULL, 0, index); 
+    bool isPrevBearish = prevClose < prevOpen; 
+    bool isCurrentBullish = currentClose > currentOpen; 
+    bool engulfs = currentOpen < prevClose && currentClose > prevOpen; 
+    return isPrevBearish && isCurrentBullish && engulfs; 
 }
 
-bool IsBearishEngulfing(int index) {
-    double prevOpen = iOpen(NULL, 0, index + 1);
-    double prevClose = iClose(NULL, 0, index + 1);
-    double currentOpen = iOpen(NULL, 0, index);
-    double currentClose = iClose(NULL, 0, index);
-    bool isPrevBullish = prevClose > prevOpen;
-    bool isCurrentBearish = currentClose < currentOpen;
-    bool engulfs = currentOpen > prevClose && currentClose < prevOpen;
-    return isPrevBullish && isCurrentBearish && engulfs;
+bool IsBearishEngulfing(int index) { 
+    double prevOpen = iOpen(NULL, 0, index + 1); 
+    double prevClose = iClose(NULL, 0, index + 1); 
+    double currentOpen = iOpen(NULL, 0, index); 
+    double currentClose = iClose(NULL, 0, index); 
+    bool isPrevBullish = prevClose > prevOpen; 
+    bool isCurrentBearish = currentClose < currentOpen; 
+    bool engulfs = currentOpen > prevClose && currentClose < prevOpen; 
+    return isPrevBullish && isCurrentBearish; 
 }
 
+void ScanForEngulfingPatterns() { 
+    double ema21 = GetEMA21(); 
+    int bars = iBars(NULL, 0); 
 
-void ScanForEngulfingPatterns() {
-    double ema21 = GetEMA21();
-    int bars = iBars(NULL, 0);
+    for (int i = 1; i < bars - 1; i++) { 
+        datetime barTime = iTime(NULL, 0, i); 
+        double barClose = iClose(NULL, 0, i); 
 
-    for (int i = 1; i < bars - 1; i++) {
-        datetime barTime = iTime(NULL, 0, i);
-        double barClose = iClose(NULL, 0, i);
-
-        if (barTime > lastStartTime && IsBullishEngulfing(i)) {
-            Print("Bullish engulfing pattern detected at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
-        }
+        if (barTime > lastStartTime && IsBullishEngulfing(i)) { 
+            Print("Bullish engulfing pattern detected at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES)); 
+        } 
         
-        if (barTime > lastStartTime && IsBearishEngulfing(i)) {
-            Print("Bearish engulfing pattern detected at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
-        }
-    }
+        if (barTime > lastStartTime && IsBearishEngulfing(i)) { 
+            Print("Bearish engulfing pattern detected at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES)); 
+        } 
+    } 
 }
 
-
-void FlagCandlesWithArrows() {
+void FlagCandlesWithArrows() { 
     double ema21 = GetEMA21();  
     int bars = iBars(NULL, 0);  
 
-    static double candle0High = 0;
-    static int candleCounter = 0;
+    static double candle0High = 0; 
+    static int candleCounter = 0;  
 
-    // Opdater last position close price
-    if (IsPositionOpen()) {
-        for (int i = 0; i < PositionsTotal(); i++) {
-            if (PositionSelectByTicket(PositionGetTicket(i))) {
-                lastPositionClosePrice = PositionGetDouble(POSITION_PRICE_OPEN); 
-                break; 
-            }
-        }
-    } else {
-        lastPositionClosePrice = 0;
-    }
+    // Opdater sidste position close pris 
+    UpdateLastOpenTime(); 
 
-    for (int i = 1; i < bars; i++) {
+    for (int i = 1; i < bars; i++) { 
         double closePrice = iClose(NULL, 0, i);  
         double openPrice = iOpen(NULL, 0, i);    
         double highPrice = iHigh(NULL, 0, i);    
         datetime barTime = iTime(NULL, 0, i);    
 
-        // Entry condition: Bullish candle above EMA21 and no open positions
-        if (barTime > lastStartTime && closePrice > openPrice && closePrice > ema21 && openPrice > candle0High && !IsPositionOpen()) {
+        // Entry condition: Bullish candle above EMA21 and no open positions 
+        if (barTime > lastStartTime && closePrice > openPrice && closePrice > ema21 && openPrice > candle0High && !IsPositionOpen() && !hasClosedPosition) { 
             candle0High = highPrice;  
-            string arrowName = "bullish_candle_" + IntegerToString(barTime);
+            string arrowName = "bullish_candle_" + IntegerToString(barTime); 
             CreateArrow(arrowName, barTime, highPrice, clrBlue, 233);  
-            candleCounter = 0;
+            candleCounter = 0; // Reset candle counter when a new buy position is opened 
+            hasRedArrowBeenCreated = false; // Reset the red arrow flag
+            positionOpened = true; // Set position opened flag
             Print("Bullish candle found above EMA 21 at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));   
-        }
+        } 
 
-      
-        if (candle0High > 0) {
-            candleCounter++;
+        // Increment candleCounter if candle0High is set 
+        if (candle0High > 0) { 
+            candleCounter++; 
 
-            // Check if the current candle closes above candle0High
-            if (closePrice > candle0High) {
-                Print("Candle closes above candle 0 high at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES));
+            // Check if the current candle closes above candle0High 
+            if (closePrice > candle0High) { 
+                Print("Candle closes above candle 0 high at ", TimeToString(barTime, TIME_DATE | TIME_MINUTES)); 
                 candleCounter = 0;  
+                hasRedArrowBeenCreated = false;
                 break;  
-            }
+            } 
 
-            // After 5 candles, close all positions if none of them closes above candle0High
-            if (candleCounter >= 5) {
-                CloseAllPositions();
-                Print("No candle closed above the high of candle 0 after 5 candles, closing all positions.");
-                candleCounter = 0;  
-                candle0High = 0;  
-            }
-        }
-    }
-}
+            // After 5 candles, close all positions if none of them closes above candle0High 
+            if (candleCounter >= 5) { 
+                if (!positionOpened) { 
+                    CloseAllPositions(); 
+                    Print("No candle closed above the high of candle 0 after 5 candles, closing all positions."); 
 
+                    // Create a red arrow to indicate that positions have been closed, only if not created before
+                    if (!hasRedArrowBeenCreated) {
+                        string exitArrowName = "exit_candle_" + IntegerToString(TimeCurrent());
+                        CreateArrow(exitArrowName, iTime(NULL, 0, 0), iClose(NULL, 0, 0), clrRed, 234); 
+                        hasRedArrowBeenCreated = true; // Set the flag to prevent spamming
+                    }
 
-
-void CloseAllPositions() {
-    MqlTradeRequest closeRequest = {};
-    MqlTradeResult closeResult = {};
-
-    if (PositionsTotal() > 0) {
-        for (int i = 0; i < PositionsTotal(); i++) {
-            if (PositionSelectByTicket(PositionGetTicket(i))) {
-                positionTicket = PositionGetTicket(i);
-                ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-
-                closeRequest.action = TRADE_ACTION_DEAL;
-                closeRequest.position = positionTicket;
-                closeRequest.symbol = Symbol();
-                closeRequest.volume = PositionGetDouble(POSITION_VOLUME);
-                closeRequest.type = posType == POSITION_TYPE_BUY ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-                closeRequest.price = SymbolInfoDouble(Symbol(), posType == POSITION_TYPE_BUY ? SYMBOL_BID : SYMBOL_ASK);
-                closeRequest.deviation = 10;
-                closeRequest.type_filling = ORDER_FILLING_FOK;
-                closeRequest.comment = "Close Position";
-
-                if (OrderSend(closeRequest, closeResult)) {
-                    Print("Position closed. Order number: ", closeResult.order);
-                    CreateArrow("exit_candle_" + IntegerToString(TimeCurrent()), iTime(NULL, 0, 0), iClose(NULL, 0, 0), clrRed, 234); 
-                } else {
-                    Print("Failed to close position. Error code: ", GetLastError());
+                    hasClosedPosition = true; // Mark that we have closed the position
+                    candleCounter = 0;  
+                    candle0High = 0;  
                 }
-            }
-        }
-    }
+            } 
+        } 
+    } 
 }
 
+void CloseAllPositions() { 
+    MqlTradeRequest closeRequest = {}; 
+    MqlTradeResult closeResult = {}; 
 
+    for (int i = 0; i < PositionsTotal(); i++) { 
+        if (PositionSelectByTicket(PositionGetTicket(i))) { 
+            // Close the position
+            closeRequest.action = TRADE_ACTION_DEAL; 
+            closeRequest.symbol = PositionGetString(POSITION_SYMBOL); 
+            closeRequest.volume = PositionGetDouble(POSITION_VOLUME); 
+            closeRequest.type = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? ORDER_TYPE_SELL : ORDER_TYPE_BUY; 
+            closeRequest.price = SymbolInfoDouble(Symbol(), closeRequest.type == ORDER_TYPE_SELL ? SYMBOL_BID : SYMBOL_ASK); 
+            closeRequest.deviation = 10; 
+            closeRequest.type_filling = ORDER_FILLING_FOK; 
+            closeRequest.comment = "Close Position"; 
 
+            if (OrderSend(closeRequest, closeResult)) { 
+                Print("Position closed. Order number: ", closeResult.order); 
+            } else { 
+                Print("Failed to close position. Error code: ", GetLastError()); 
+            } 
+        } 
+    } 
+}
 
-int OnInit() {
+int OnInit() { 
     lastStartTime = TimeCurrent(); 
-    Print("System started at: ", TimeToString(lastStartTime));
+    Print("System started at: ", TimeToString(lastStartTime)); 
     totalCandleCount = 0; 
-    return INIT_SUCCEEDED;
+    candleCounter = 0; 
+    candle0High = 0; 
+    hasClosedPosition = false; 
+    return INIT_SUCCEEDED; 
 }
 
-void OnTick() {
-    ScanForEngulfingPatterns();
-    FlagCandlesWithArrows();
-    
+void OnTick() { 
+    // Check if we are on a new candle
+    datetime currentCandleTime = iTime(NULL, 0, 0); 
+    if (currentCandleTime != lastCandleTime) { 
+        lastCandleTime = currentCandleTime;  
+        ScanForEngulfingPatterns(); 
+        FlagCandlesWithArrows(); 
+    }
 }
